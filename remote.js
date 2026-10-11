@@ -5,6 +5,17 @@
 // everything changed since the newest change it holds.
 (function () {
   const ROBOT_ONLY = 'Robot actions run on the robot cell. This website shows saved boards and results.';
+  const EDIT_ONLY = 'Changes to a board are made on a robot cell. This website shows saved boards and results.';
+  // Every call Board View makes to a cell, and what the website does with it. tests/test_stand_sync.py
+  // fails when the page makes a call listed in none of these (BV-359 and BV-360 were such calls).
+  const ANSWERED = ['/api/boards', '/api/measurements', '/api/measurements/overview', '/api/measurements/point',
+    '/api/golden-capture', '/api/app-verification', '/api/board-heights', '/api/test-plans', '/api/verification-selection'];
+  const BOARD_EDITS = ['/api/component-name', '/api/pinout-orientation', '/api/part-not-tested', '/api/point-not-tested',
+    '/api/small-parts/fix', '/api/small-parts/undo', '/api/vias/fix', '/api/vias/undo', '/api/test-points/fix', '/api/test-points/undo'];
+  const ROBOT_CALLS = ['/api/app-mode', '/api/measurements/start', '/api/measurements/reference', '/api/measurements/huntron',
+    '/api/golden-capture/preview', '/api/golden-capture/continue', '/api/golden-capture/retest-flat', '/api/test-plans/prepare',
+    '/api/test-plans/verify', '/api/test-plans/master', '/api/test-plans/preview', '/api/test-plans/save',
+    '/api/test-plans/deliver', '/api/board-heights/save'];
   const OLD_RUN = 'A whole run record opens on the robot cell. Its readings are in Show saved points.';
   const IV_MESSAGE = 'Saved raw IV readings across all matching runs; reference acceptance is shown separately.';
   // Catch-up looks back this far: a row written just before the newest one seen may commit after it.
@@ -94,7 +105,7 @@
     return Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'measurement_run').map(([key, item]) => [key, withoutRunLinks(item)]));
   }
 
-  if (typeof module !== 'undefined') { module.exports = {overview, point, matchesQuery}; return; }
+  if (typeof module !== 'undefined') { module.exports = {overview, point, matchesQuery, ANSWERED, BOARD_EDITS, ROBOT_CALLS}; return; }
 
   // ---- the shared copy, held in this tab ---------------------------------------------------------
   const C = window.TM5S_REMOTE_CONFIG, sb = window.supabase.createClient(C.url, C.anonKey), board = C.board;
@@ -154,12 +165,13 @@
   async function request(url, body) {
     const address = new URL(url, location.href), path = address.pathname, params = address.searchParams, side = params.get('side');
     if (body) {
+      if (path === '/api/verification-selection') return {selection: body.selection, saved: false};
       if (path === '/api/app-verification' && body.action === 'set_tool') {
         tool = {tool: body.tool, power_state: body.power_state || 'off', reference_connection: body.reference_connection || 'GND'};
         const saved = await snapshot(board, body.side, '/api/app-verification');
         return {run: withoutRunLinks(saved?.run ?? null), current_tool: viewerTool(saved?.current_tool, body.side)};
       }
-      throw new Error(ROBOT_ONLY);
+      throw refuse(path);
     }
     if (path === '/api/boards') return (await snapshot('*', '*', '/api/boards')) || {boards: []};
     if (path === '/api/measurements') {
@@ -200,7 +212,18 @@
       if (!saved) throw new Error('This side’s saved tests have not been shared yet.');
       return saved;
     }
-    throw new Error(ROBOT_ONLY);
+    if (![...ANSWERED, ...BOARD_EDITS, ...ROBOT_CALLS].includes(path)) console.error('The website does not know the call ' + path);
+    return Promise.reject(new Error(BOARD_EDITS.includes(path) ? EDIT_ONLY : ROBOT_ONLY));
+  }
+
+  // A press the website refuses says why where the person is looking, not only in a panel's note.
+  let flash = null;
+  function refuse(path) {
+    const text = BOARD_EDITS.includes(path) ? EDIT_ONLY : ROBOT_ONLY;
+    flash = {text, until: Date.now() + 6000};
+    say();
+    setTimeout(say, 6100);
+    return new Error(text);
   }
 
   // ---- keeping current ---------------------------------------------------------------------------
@@ -272,7 +295,8 @@
     'display:none;align-items:center;gap:12px;box-shadow:0 8px 30px #0008';
   function say() {
     let text = '', action = null;
-    if (revision !== C.revision) { text = 'A newer version of this board was published.'; action = ['Reload', () => location.reload()]; }
+    if (flash && Date.now() < flash.until) text = flash.text;
+    else if (revision !== C.revision) { text = 'A newer version of this board was published.'; action = ['Reload', () => location.reload()]; }
     else if (!online) text = 'Offline · reconnecting. Results may be out of date.';
     else {
       for (const cell of cells.values()) {
