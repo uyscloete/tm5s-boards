@@ -183,6 +183,18 @@
       const saved = await snapshot(board, side, '/api/app-verification');
       return {run: withoutRunLinks(saved?.run ?? null), current_tool: viewerTool(saved?.current_tool, side)};
     }
+    if (path === '/api/board-heights') {
+      const saved = await snapshot(board, side, '/api/board-heights');
+      if (!saved) throw new Error('This side’s saved needle clearance has not been shared yet.');
+      // The cell names its own photo file; here the same side's photo is the shared copy on the page.
+      // The board view may still be drawing it when the clearance is first read.
+      let photo = null;
+      for (let wait = 0; !photo && wait < 50; wait++) {
+        photo = document.querySelector('img[alt="' + side + '"]')?.src;
+        if (!photo) await new Promise(done => setTimeout(done, 100));
+      }
+      return {...saved, photo_url: photo || null};
+    }
     if (path === '/api/test-plans' && !params.get('plan')) {
       const saved = await snapshot(board, side, '/api/test-plans');
       if (!saved) throw new Error('This side’s saved tests have not been shared yet.');
