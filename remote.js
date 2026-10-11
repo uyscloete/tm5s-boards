@@ -11,7 +11,7 @@
   const ANSWERED = ['/api/boards', '/api/measurements', '/api/measurements/overview', '/api/measurements/point',
     '/api/golden-capture', '/api/app-verification', '/api/board-heights', '/api/test-plans', '/api/verification-selection'];
   const BOARD_EDITS = ['/api/component-name', '/api/pinout-orientation', '/api/part-not-tested', '/api/point-not-tested',
-    '/api/small-parts/fix', '/api/small-parts/undo', '/api/vias/fix', '/api/vias/undo', '/api/test-points/fix', '/api/test-points/undo'];
+    '/api/small-parts/fix', '/api/small-parts/undo', '/api/vias/fix', '/api/vias/undo', '/api/test-points/fix', '/api/test-points/undo', '/api/corner-review'];
   const ROBOT_CALLS = ['/api/app-mode', '/api/measurements/start', '/api/measurements/reference', '/api/measurements/huntron',
     '/api/golden-capture/preview', '/api/golden-capture/continue', '/api/golden-capture/retest-flat', '/api/test-plans/prepare',
     '/api/test-plans/verify', '/api/test-plans/master', '/api/test-plans/preview', '/api/test-plans/save',
@@ -352,6 +352,6 @@
     if (link) { event.preventDefault(); location.href = 'index.html'; }
   }, true);
 
-  window.TM5S_REMOTE = {request, catchUp, state: () => ({online, newest, revision})};
+  window.TM5S_REMOTE = {request, refuse, catchUp, state: () => ({online, newest, revision})};
   listen();
 })();
