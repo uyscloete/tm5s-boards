@@ -98,6 +98,10 @@
           : 'No saved IV traces match this permanent point identity.'};
   }
 
+  // A side's saved clearance shows the shared photo only where the cell shows its own: a side with
+  // no proved photo frame has none on the cell, and must say so here too (stand_site_audit, 2026-10-11).
+  function clearance(saved, photo) { return saved.photo_url ? {...saved, photo_url: photo || null} : saved; }
+
   function withoutRunLinks(value) {
     // A finished capture opens its whole run on the cell; here its readings show in Show saved points.
     if (Array.isArray(value)) return value.map(withoutRunLinks);
@@ -105,7 +109,7 @@
     return Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'measurement_run').map(([key, item]) => [key, withoutRunLinks(item)]));
   }
 
-  if (typeof module !== 'undefined') { module.exports = {overview, point, matchesQuery, ANSWERED, BOARD_EDITS, ROBOT_CALLS}; return; }
+  if (typeof module !== 'undefined') { module.exports = {overview, point, matchesQuery, clearance, ANSWERED, BOARD_EDITS, ROBOT_CALLS}; return; }
 
   // ---- the shared copy, held in this tab ---------------------------------------------------------
   const C = window.TM5S_REMOTE_CONFIG, sb = window.supabase.createClient(C.url, C.anonKey), board = C.board;
@@ -199,13 +203,14 @@
       const saved = await snapshot(board, side, '/api/board-heights');
       if (!saved) throw new Error('This side’s saved needle clearance has not been shared yet.');
       // The cell names its own photo file; here the same side's photo is the shared copy on the page.
+      if (!saved.photo_url) return clearance(saved, null);
       // The board view may still be drawing it when the clearance is first read.
       let photo = null;
       for (let wait = 0; !photo && wait < 50; wait++) {
         photo = document.querySelector('img[alt="' + side + '"]')?.src;
         if (!photo) await new Promise(done => setTimeout(done, 100));
       }
-      return {...saved, photo_url: photo || null};
+      return clearance(saved, photo);
     }
     if (path === '/api/test-plans' && !params.get('plan')) {
       const saved = await snapshot(board, side, '/api/test-plans');
