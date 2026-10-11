@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TM5S Boards</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='18' fill='%230f1724'/%3E%3Crect x='30' y='30' width='40' height='40' rx='6' fill='%234299e1'/%3E%3C/svg%3E">
+<style>
+  :root { color-scheme: dark; --bg: #0b121b; --panel: #121c2a; --line: #334155; --text: #e2e8f0; --muted: #acbdd1;
+          --accent: #1d4ed8; --link: #90cdf4; --warn: #f6c177; --good: #7ee2a8; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--text); font: 16px Arial, sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line);
+           background: var(--panel); flex-wrap: wrap; }
+  header h1 { font-size: 20px; margin: 0; margin-right: auto; }
+  header small { color: var(--muted); }
+  button, input { font: inherit; color: var(--text); background: #1c2c42; border: 1px solid #51627c; border-radius: 7px;
+                  min-height: 44px; padding: 9px 12px; }
+  button { cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); font-weight: 600; }
+  main { padding: 16px; max-width: 1200px; margin: 0 auto; }
+  #signin { max-width: 380px; margin: 10vh auto 0; display: grid; gap: 12px; background: var(--panel);
+            border: 1px solid var(--line); border-radius: 12px; padding: 24px; }
+  #signin h2 { margin: 0 0 4px; font-size: 22px; }
+  #signin label { display: grid; gap: 6px; color: var(--muted); font-size: 14px; }
+  #signin p { margin: 0; color: var(--muted); line-height: 1.5; font-size: 14px; }
+  [role=alert]:empty, [hidden] { display: none !important; }
+  [role=alert] { color: var(--warn); line-height: 1.5; }
+  #tools { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+  #search { flex: 1; min-width: 200px; }
+  #count { color: var(--muted); }
+  #boards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
+  .board { display: grid; gap: 6px; color: inherit; text-decoration: none; background: var(--panel);
+           border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+  .board:hover, .board:focus-visible { border-color: var(--link); outline: none; }
+  .photos { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .photos span { aspect-ratio: 4/3; background: #08101d; border-radius: 6px; overflow: hidden; display: grid;
+                 place-items: center; color: var(--muted); font-size: 12px; }
+  .photos img { width: 100%; height: 100%; object-fit: contain; }
+  .name { font-size: 18px; font-weight: 600; }
+  .part, .meta { color: var(--muted); font-size: 14px; }
+  .open { color: var(--link); font-size: 14px; }
+  #cells { margin-top: 24px; color: var(--muted); font-size: 13px; line-height: 1.7; }
+  #cells .warn { color: var(--warn); }
+</style>
+</head>
+<body>
+<header>
+  <h1>TM5S Boards</h1>
+  <small id="who"></small>
+  <button id="signout" hidden>Sign out</button>
+</header>
+<main>
+  <form id="signin" hidden>
+    <h2>Sign in</h2>
+    <p>Use the sign-in the robot cell team gave you.</p>
+    <label>Email<input id="email" type="email" autocomplete="username" required></label>
+    <label>Password<input id="password" type="password" autocomplete="current-password" required></label>
+    <button class="primary" id="go">Sign in</button>
+    <div id="signin-error" role="alert"></div>
+  </form>
+  <section id="list" hidden>
+    <div id="tools">
+      <input id="search" type="search" placeholder="Find a board by name or part number" aria-label="Find a board">
+      <span id="count" role="status"></span>
+    </div>
+    <div id="boards"></div>
+    <div id="list-error" role="alert"></div>
+    <div id="cells" aria-label="Robot cells"></div>
+  </section>
+</main>
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="site.js"></script>
+<script>
+// The website's home: sign in, then every board a robot cell has shared, newest data first.
+const sb = supabase.createClient(TM5S_SITE.url, TM5S_SITE.anonKey);
+const $ = id => document.getElementById(id);
+const next = new URLSearchParams(location.search).get('next');
+
+function ago(at) {
+  const seconds = Math.max(0, (Date.now() - Date.parse(at)) / 1000);
+  return seconds < 90 ? 'just now' : seconds < 5400 ? Math.round(seconds / 60) + ' min ago'
+    : seconds < 129600 ? Math.round(seconds / 3600) + ' h ago' : new Date(at).toLocaleDateString();
+}
+
+async function show() {
+  const {data: {session}} = await sb.auth.getSession();
+  $('signin').hidden = !!session; $('list').hidden = !session; $('signout').hidden = !session;
+  $('who').textContent = session ? session.user.email : '';
+  if (!session) { $('email').focus(); return; }
+  // Back to the board that asked for a sign-in.
+  if (next && /board\.html\?/.test(next)) { location.replace('board.html' + next.slice(next.indexOf('?'))); return; }
+  const {data: stands, error} = await sb.from('stands').select('id,name,part_number,revision,thumbnails,counts,updated_at').order('name');
+  if (error) { $('list-error').textContent = 'Boards could not be loaded: ' + error.message; return; }
+  const names = [...new Set(stands.flatMap(stand => Object.values(stand.thumbnails || {})))];
+  const links = await tm5sSignedLinks(sb, names).catch(() => ({}));
+  $('boards').replaceChildren(...stands.map(stand => {
+    const card = document.createElement('a');
+    card.className = 'board';
+    card.href = 'board.html?board=' + encodeURIComponent(stand.id) + '&side=Front';
+    card.dataset.search = (stand.name + ' ' + stand.part_number + ' ' + stand.id).toLowerCase();
+    const photos = document.createElement('div');
+    photos.className = 'photos';
+    for (const side of ['Front', 'Reverse']) {
+      const slot = document.createElement('span'), name = (stand.thumbnails || {})[side];
+      if (name && links[name]) {
+        const img = document.createElement('img');
+        img.src = links[name]; img.alt = stand.name + ' · ' + side; img.loading = 'lazy';
+        slot.append(img);
+      } else slot.textContent = 'No ' + side + ' photo';
+      photos.append(slot);
+    }
+    const counts = stand.counts || {};
+    const line = (cls, text) => Object.assign(document.createElement('span'), {className: cls, textContent: text});
+    card.append(photos, line('name', stand.name), line('part', stand.part_number || 'No part number'),
+      line('meta', (counts.components ?? 0) + ' components · ' + (counts.test_pads ?? 0) + ' test pads · version ' + stand.revision + ' · ' + ago(stand.updated_at)),
+      line('open', 'Open board →'));
+    return card;
+  }));
+  filter();
+  const {data: cells} = await sb.from('cells').select('*').order('id');
+  $('cells').replaceChildren(...(cells || []).map(cell => {
+    const row = document.createElement('div');
+    const problem = cell.message || cell.pending > 0;
+    row.className = problem ? 'warn' : '';
+    row.textContent = 'Robot cell ' + cell.id + ': ' + (cell.message ? 'cannot send results · ' + cell.message
+      : cell.pending > 0 ? cell.pending + ' changes waiting to upload' : 'results up to date') + ' · checked ' + ago(cell.updated_at);
+    return row;
+  }));
+}
+
+function filter() {
+  const words = $('search').value.trim().toLowerCase();
+  let shown = 0;
+  for (const card of $('boards').children) { card.hidden = !!words && !card.dataset.search.includes(words); shown += !card.hidden; }
+  $('count').textContent = shown + ' of ' + $('boards').children.length + ' boards';
+}
+
+$('search').oninput = filter;
+$('signin').onsubmit = async event => {
+  event.preventDefault();
+  $('go').disabled = true; $('signin-error').textContent = '';
+  const {error} = await sb.auth.signInWithPassword({email: $('email').value.trim(), password: $('password').value});
+  $('go').disabled = false;
+  if (error) { $('signin-error').textContent = 'Not signed in: ' + error.message; return; }
+  show();
+};
+$('signout').onclick = async () => { await sb.auth.signOut(); show(); };
+show();
+</script>
+</body>
+</html>

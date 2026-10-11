@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Board View</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; min-height: 100vh; background: #0b121b; color: #e2e8f0; font: 16px Arial, sans-serif;
+         display: grid; place-items: center; padding: 16px; box-sizing: border-box; }
+  #loading { text-align: center; line-height: 1.6; max-width: 520px; }
+  #loading a { color: #90cdf4; }
+</style>
+</head>
+<body>
+<div id="loading" role="status">Opening the board…</div>
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="site.js"></script>
+<script>
+// Opens the newest published Board View page of a board from the shared store (TM5S stand_sync) and
+// runs it with the website's answers (remote.js) in place of a robot cell's service.
+
+(async () => {
+  const say = (text, home) => {
+    const box = document.getElementById('loading');
+    box.textContent = text;
+    if (home) { const link = document.createElement('a'); link.href = 'index.html'; link.textContent = 'All boards'; box.append(document.createElement('br'), link); }
+  };
+  try {
+    const params = new URLSearchParams(location.search), board = params.get('board');
+    const sb = supabase.createClient(TM5S_SITE.url, TM5S_SITE.anonKey);
+    const {data: {session}} = await sb.auth.getSession();
+    if (!session) { location.replace('index.html?next=' + encodeURIComponent(location.pathname + location.search)); return; }
+    if (!board) { location.replace('index.html'); return; }
+    const {data: stand, error} = await sb.from('stands').select('id,revision,page_path').eq('id', board).maybeSingle();
+    if (error) throw error;
+    if (!stand) { say('This board has not been shared from a robot cell.', true); return; }
+    say('Opening ' + stand.id + '…');
+    let html = await new Response((await tm5sStandPage(sb, stand.page_path)).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+    // Photos and datasheets are separate shared files; the page names them by content.
+    const names = [...new Set(html.match(/stand-asset:[0-9a-f]{64}\.(?:jpg|pdf)/g) || [])].map(mark => mark.slice('stand-asset:'.length));
+    const links = await tm5sSignedLinks(sb, names);
+    html = html.replace(/stand-asset:([0-9a-f]{64}\.(?:jpg|pdf))/g, (mark, name) => links[name] || mark);
+    const config = {url: TM5S_SITE.url, anonKey: TM5S_SITE.anonKey, board: stand.id, revision: stand.revision};
+    // The Supabase library loaded above stays on this window when the page is replaced.
+    const head = '<script>window.TM5S_REMOTE_CONFIG=' + JSON.stringify(config).replace(/</g, '\\u003c') + ';<\/script>' +
+      '<script src="remote.js?v=' + encodeURIComponent(TM5S_SITE.version || '') + '"><\/script>';
+    const at = html.search(/<head[^>]*>/i);
+    html = at < 0 ? head + html : html.replace(/<head[^>]*>/i, found => found + head);
+    document.open();
+    document.write(html);
+    document.close();
+  } catch (error) {
+    say('The board could not be opened: ' + (error.message || error), true);
+  }
+})();
+</script>
+</body>
+</html>
