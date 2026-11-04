@@ -109,7 +109,31 @@
     return Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'measurement_run').map(([key, item]) => [key, withoutRunLinks(item)]));
   }
 
-  if (typeof module !== 'undefined') { module.exports = {overview, point, matchesQuery, clearance, ANSWERED, BOARD_EDITS, ROBOT_CALLS}; return; }
+  // ---- a point's design, as one line under its label (tm5s_mcp/design_publish.py fills the tables) ----
+  const TEST_POINT = /^P\d+$/, SHOWN_PADS = 12;
+  function padName(pad) { return TEST_POINT.test(pad.refdes) && String(pad.pin) === '1' ? pad.refdes : pad.refdes + ' pin ' + pad.pin; }
+  function designLine(found) {
+    const link = found && found.link;
+    if (!link) return null;
+    const parts = [];
+    if (found.connector) parts.push(found.connector.connector + ' pin ' + found.connector.connector_pin + (found.connector.function ? ' · ' + found.connector.function : ''));
+    parts.push(padName(link));
+    if (found.nets) {
+      const net = found.nets;
+      let line = 'net ' + net.name + (net.pin_name && net.pin_name !== net.name ? ' (' + net.pin_name + ')' : '');
+      const others = (found.pads || []).filter(pad => !(pad.refdes === link.refdes && String(pad.pin) === String(link.pin)))
+        .sort((a, b) => a.refdes.localeCompare(b.refdes) || String(a.pin).localeCompare(String(b.pin)));
+      // pad_count is the whole net when only its first pads were read (a rail has hundreds).
+      const total = found.pad_count != null ? found.pad_count - 1 : others.length;
+      if (others.length) line += ' · also on this net: ' + others.slice(0, SHOWN_PADS).map(padName).join(', ') + (total > SHOWN_PADS ? ' and ' + (total - SHOWN_PADS) + ' more' : '');
+      parts.push(line);
+    } else parts.push('not on any net');
+    if (found.connector && found.connector.driver) parts.push('driven by ' + found.connector.driver);
+    for (const fact of found.facts || []) if (fact.kind === 'fitted_differs') parts.push('fitted differs: ' + fact.body);
+    return parts.join(' · ');
+  }
+
+  if (typeof module !== 'undefined') { module.exports = {overview, point, matchesQuery, clearance, designLine, ANSWERED, BOARD_EDITS, ROBOT_CALLS}; return; }
 
   // ---- the shared copy, held in this tab ---------------------------------------------------------
   const C = window.TM5S_REMOTE_CONFIG, sb = window.supabase.createClient(C.url, C.anonKey), board = C.board;
@@ -160,6 +184,35 @@
     });
   }
 
+  const designs = new Map();
+  function design(side, pointId) {
+    // The design tables are read only here, behind the page's own point call: no new call for Board View to make.
+    return remember(designs, side + '|' + pointId, async () => {
+      const one = async query => { const {data, error} = await query; if (error) throw error; return data; };
+      const link = await one(sb.from('design_point_links').select('refdes,pin,photo_pad').eq('stand_id', board).eq('side', side).eq('point_id', pointId).maybeSingle());
+      if (!link) return {link: null, nets: null, pads: [], connector: null, facts: []};
+      // A pin name may name two pads of one part (a tab split in two); either gives the net.
+      const pads = await one(sb.from('design_pads').select('net').eq('stand_id', board).eq('refdes', link.refdes).eq('pin', link.pin).limit(1));
+      const net = pads && pads.length ? pads[0].net : null;
+      const [nets, onNet, connector, facts] = await Promise.all([
+        net == null ? null : one(sb.from('design_nets').select('net,name,pin_name').eq('stand_id', board).eq('net', net).maybeSingle()),
+        net == null ? {data: [], count: 0} : sb.from('design_pads').select('refdes,pin', {count: 'exact'}).eq('stand_id', board).eq('net', net).order('refdes').order('pin').limit(SHOWN_PADS + 1),
+        one(sb.from('design_connector_pins').select('connector,connector_pin,function,driver').eq('stand_id', board).eq('refdes', link.refdes).eq('pin', link.pin).maybeSingle()),
+        one(sb.from('design_facts').select('kind,body').eq('stand_id', board).eq('kind', 'fitted_differs').eq('subject', link.refdes))]);
+      if (onNet.error) throw onNet.error;
+      return {link, nets, pads: onNet.data || [], pad_count: onNet.count, connector, facts};
+    });
+  }
+  function showDesign(pointId, line) {
+    // Under the point's heading in the readings detail the page already draws; nothing when there is no design.
+    if (!line) return;
+    const heading = document.querySelector('tr[data-signature-point="' + pointId + '"] + tr[data-signature-detail] .signature-detail h3');
+    if (!heading) return;
+    let note = heading.nextElementSibling;
+    if (!note || !note.classList.contains('design-line')) { note = document.createElement('small'); note.className = 'design-line'; heading.after(note); }
+    note.textContent = 'Design: ' + line;
+  }
+
   function viewerTool(saved, side) {
     const base = tool || {tool: 'huntron', power_state: 'off', reference_connection: saved?.reference_connection || 'GND'};
     return {...base, run: null, board, side, id: 'website', state: 'selected', reference_choices: ['GND', 'VCC'],
@@ -191,8 +244,13 @@
       return overview(records.values(), meta, params, board);
     }
     if (path === '/api/measurements/point') {
-      const [stored, problems] = await Promise.all([readings(side, params.get('point_id')), snapshot(board, side, 'problems')]);
-      return point(stored, problems, params, board);
+      const pointId = params.get('point_id');
+      // A board with no published design, or a design table the project lacks, costs the point nothing.
+      const [stored, problems, found] = await Promise.all([readings(side, pointId), snapshot(board, side, 'problems'), design(side, pointId).catch(() => null)]);
+      const answer = point(stored, problems, params, board);
+      answer.design = found ? designLine(found) : null;
+      showDesign(pointId, answer.design);
+      return answer;
     }
     if (path === '/api/golden-capture') return {run: withoutRunLinks((await snapshot(board, side, '/api/golden-capture'))?.run ?? null)};
     if (path === '/api/app-verification') {
