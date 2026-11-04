@@ -245,12 +245,11 @@
     }
     if (path === '/api/measurements/point') {
       const pointId = params.get('point_id');
-      // A board with no published design, or a design table the project lacks, costs the point nothing.
-      const [stored, problems, found] = await Promise.all([readings(side, pointId), snapshot(board, side, 'problems'), design(side, pointId).catch(() => null)]);
-      const answer = point(stored, problems, params, board);
-      answer.design = found ? designLine(found) : null;
-      showDesign(pointId, answer.design);
-      return answer;
+      const [stored, problems] = await Promise.all([readings(side, pointId), snapshot(board, side, 'problems')]);
+      // The design line arrives when its reads do: a slow link never costs the point its readings, and a board
+      // with no published design, or a project without the tables, costs it nothing.
+      design(side, pointId).then(found => showDesign(pointId, designLine(found))).catch(() => {});
+      return point(stored, problems, params, board);
     }
     if (path === '/api/golden-capture') return {run: withoutRunLinks((await snapshot(board, side, '/api/golden-capture'))?.run ?? null)};
     if (path === '/api/app-verification') {
