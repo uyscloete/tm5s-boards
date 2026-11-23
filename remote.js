@@ -15,7 +15,11 @@
   const ROBOT_CALLS = ['/api/app-mode', '/api/measurements/start', '/api/measurements/reference', '/api/measurements/huntron',
     '/api/golden-capture/preview', '/api/golden-capture/continue', '/api/golden-capture/retest-flat', '/api/test-plans/prepare',
     '/api/test-plans/verify', '/api/test-plans/master', '/api/test-plans/preview', '/api/test-plans/save',
-    '/api/test-plans/deliver', '/api/board-heights/save'];
+    '/api/test-plans/deliver', '/api/board-heights/save',
+    // Four more the page makes, refused here on purpose since 2026-11-23 (tests/test_stand_sync.py was red on them from
+    // 2026-11-04): a landing check and Stop act on the robot; the "missed or not yet read" list is the cell's own
+    // answer, not sent to the website; and the robot pill's /api/state is never asked here (live.js skips it).
+    '/api/landing-check', '/api/stop', '/api/measurements/missing', '/api/state'];
   const OLD_RUN = 'A whole run record opens on the robot cell. Its readings are in Show saved points.';
   const IV_MESSAGE = 'Saved raw IV readings across all matching runs; reference acceptance is shown separately.';
   // Catch-up looks back this far: a row written just before the newest one seen may commit after it.
@@ -109,31 +113,7 @@
     return Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'measurement_run').map(([key, item]) => [key, withoutRunLinks(item)]));
   }
 
-  // ---- a point's design, as one line under its label (tm5s_mcp/design_publish.py fills the tables) ----
-  const TEST_POINT = /^P\d+$/, SHOWN_PADS = 12;
-  function padName(pad) { return TEST_POINT.test(pad.refdes) && String(pad.pin) === '1' ? pad.refdes : pad.refdes + ' pin ' + pad.pin; }
-  function designLine(found) {
-    const link = found && found.link;
-    if (!link) return null;
-    const parts = [];
-    if (found.connector) parts.push(found.connector.connector + ' pin ' + found.connector.connector_pin + (found.connector.function ? ' · ' + found.connector.function : ''));
-    parts.push(padName(link));
-    if (found.nets) {
-      const net = found.nets;
-      let line = 'net ' + net.name + (net.pin_name && net.pin_name !== net.name ? ' (' + net.pin_name + ')' : '');
-      const others = (found.pads || []).filter(pad => !(pad.refdes === link.refdes && String(pad.pin) === String(link.pin)))
-        .sort((a, b) => a.refdes.localeCompare(b.refdes) || String(a.pin).localeCompare(String(b.pin)));
-      // pad_count is the whole net when only its first pads were read (a rail has hundreds).
-      const total = found.pad_count != null ? found.pad_count - 1 : others.length;
-      if (others.length) line += ' · also on this net: ' + others.slice(0, SHOWN_PADS).map(padName).join(', ') + (total > SHOWN_PADS ? ' and ' + (total - SHOWN_PADS) + ' more' : '');
-      parts.push(line);
-    } else parts.push('not on any net');
-    if (found.connector && found.connector.driver) parts.push('driven by ' + found.connector.driver);
-    for (const fact of found.facts || []) if (fact.kind === 'fitted_differs') parts.push('fitted differs: ' + fact.body);
-    return parts.join(' · ');
-  }
-
-  if (typeof module !== 'undefined') { module.exports = {overview, point, matchesQuery, clearance, designLine, ANSWERED, BOARD_EDITS, ROBOT_CALLS}; return; }
+  if (typeof module !== 'undefined') { module.exports = {overview, point, matchesQuery, clearance, ANSWERED, BOARD_EDITS, ROBOT_CALLS}; return; }
 
   // ---- the shared copy, held in this tab ---------------------------------------------------------
   const C = window.TM5S_REMOTE_CONFIG, sb = window.supabase.createClient(C.url, C.anonKey), board = C.board;
@@ -184,35 +164,6 @@
     });
   }
 
-  const designs = new Map();
-  function design(side, pointId) {
-    // The design tables are read only here, behind the page's own point call: no new call for Board View to make.
-    return remember(designs, side + '|' + pointId, async () => {
-      const one = async query => { const {data, error} = await query; if (error) throw error; return data; };
-      const link = await one(sb.from('design_point_links').select('refdes,pin,photo_pad').eq('stand_id', board).eq('side', side).eq('point_id', pointId).maybeSingle());
-      if (!link) return {link: null, nets: null, pads: [], connector: null, facts: []};
-      // A pin name may name two pads of one part (a tab split in two); either gives the net.
-      const pads = await one(sb.from('design_pads').select('net').eq('stand_id', board).eq('refdes', link.refdes).eq('pin', link.pin).limit(1));
-      const net = pads && pads.length ? pads[0].net : null;
-      const [nets, onNet, connector, facts] = await Promise.all([
-        net == null ? null : one(sb.from('design_nets').select('net,name,pin_name').eq('stand_id', board).eq('net', net).maybeSingle()),
-        net == null ? {data: [], count: 0} : sb.from('design_pads').select('refdes,pin', {count: 'exact'}).eq('stand_id', board).eq('net', net).order('refdes').order('pin').limit(SHOWN_PADS + 1),
-        one(sb.from('design_connector_pins').select('connector,connector_pin,function,driver').eq('stand_id', board).eq('refdes', link.refdes).eq('pin', link.pin).maybeSingle()),
-        one(sb.from('design_facts').select('kind,body').eq('stand_id', board).eq('kind', 'fitted_differs').eq('subject', link.refdes))]);
-      if (onNet.error) throw onNet.error;
-      return {link, nets, pads: onNet.data || [], pad_count: onNet.count, connector, facts};
-    });
-  }
-  function showDesign(pointId, line) {
-    // Under the point's heading in the readings detail the page already draws; nothing when there is no design.
-    if (!line) return;
-    const heading = document.querySelector('tr[data-signature-point="' + pointId + '"] + tr[data-signature-detail] .signature-detail h3');
-    if (!heading) return;
-    let note = heading.nextElementSibling;
-    if (!note || !note.classList.contains('design-line')) { note = document.createElement('small'); note.className = 'design-line'; heading.after(note); }
-    note.textContent = 'Design: ' + line;
-  }
-
   function viewerTool(saved, side) {
     const base = tool || {tool: 'huntron', power_state: 'off', reference_connection: saved?.reference_connection || 'GND'};
     return {...base, run: null, board, side, id: 'website', state: 'selected', reference_choices: ['GND', 'VCC'],
@@ -244,11 +195,7 @@
       return overview(records.values(), meta, params, board);
     }
     if (path === '/api/measurements/point') {
-      const pointId = params.get('point_id');
-      const [stored, problems] = await Promise.all([readings(side, pointId), snapshot(board, side, 'problems')]);
-      // The design line arrives when its reads do: a slow link never costs the point its readings, and a board
-      // with no published design, or a project without the tables, costs it nothing.
-      design(side, pointId).then(found => showDesign(pointId, designLine(found))).catch(() => {});
+      const [stored, problems] = await Promise.all([readings(side, params.get('point_id')), snapshot(board, side, 'problems')]);
       return point(stored, problems, params, board);
     }
     if (path === '/api/golden-capture') return {run: withoutRunLinks((await snapshot(board, side, '/api/golden-capture'))?.run ?? null)};
@@ -413,6 +360,12 @@
     const link = event.target.closest?.('a[href="/board-view.html"]');
     if (link) { event.preventDefault(); location.href = 'index.html'; }
   }, true);
+
+  // Known repairs of this board type has its own page on the website (fixes.html): one press from the board.
+  const repairs = Object.assign(document.createElement('a'), {id: 'stand-known-repairs', href: 'fixes.html?board=' + encodeURIComponent(board), textContent: 'Known repairs'});
+  repairs.style.cssText = 'position:fixed;right:12px;bottom:12px;z-index:190;min-height:44px;display:inline-flex;align-items:center;padding:8px 14px;' +
+    'border-radius:8px;background:#1d4ed8;color:#fff;font:600 14px Arial,sans-serif;text-decoration:none;box-shadow:0 8px 30px #0008';
+  (function place() { if (document.body) document.body.append(repairs); else setTimeout(place, 200); })();
 
   window.TM5S_REMOTE = {request, refuse, catchUp, state: () => ({online, newest, revision})};
   listen();

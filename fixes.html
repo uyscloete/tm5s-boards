@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://wncvshuagzkoebhqoira.supabase.co" crossorigin>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<title>Known repairs</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='18' fill='%230f1724'/%3E%3Crect x='30' y='30' width='40' height='40' rx='6' fill='%234299e1'/%3E%3C/svg%3E">
+<style>
+  :root { color-scheme: dark; --bg: #0b121b; --panel: #121c2a; --card: #1a2332; --line: #334155; --text: #e2e8f0; --muted: #acbdd1;
+          --accent: #1d4ed8; --link: #90cdf4; --warn: #f6c177; --good: #7ee2a8; --bad: #fca5a5; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--text); font: 16px Arial, sans-serif; }
+  header { display: flex; align-items: center; gap: 14px; padding: 12px 16px; border-bottom: 1px solid var(--line);
+           background: var(--panel); flex-wrap: wrap; }
+  header h1 { font-size: 20px; margin: 0; margin-right: auto; }
+  header h1 small { color: var(--muted); font-weight: 400; font-size: 15px; margin-left: 8px; }
+  header a { color: var(--link); text-decoration: none; min-height: 44px; display: inline-flex; align-items: center; }
+  main { padding: 16px; max-width: 1280px; margin: 0 auto; display: grid; gap: 22px; }
+  #tools { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  #search { flex: 1; min-width: 220px; font: inherit; color: var(--text); background: #1c2c42; border: 1px solid #51627c;
+            border-radius: 7px; min-height: 44px; padding: 9px 12px; }
+  #count { color: var(--muted); }
+  [role=alert]:empty, [hidden] { display: none !important; }
+  [role=alert] { color: var(--warn); line-height: 1.5; }
+  section h2 { font-size: 12px; letter-spacing: .12em; color: #4299e1; margin: 0 0 10px; display: flex; justify-content: space-between;
+               gap: 10px; align-items: baseline; }
+  section h2 span { color: var(--muted); letter-spacing: 0; font-weight: 400; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; align-items: start; }
+  details { background: var(--card); border: 1px solid #2d3a4a; border-radius: 12px; }
+  details[open] { grid-column: 1 / -1; border-color: #4299e1; }
+  summary { list-style: none; cursor: pointer; padding: 16px; display: grid; gap: 8px; min-height: 44px; }
+  summary::-webkit-details-marker { display: none; }
+  .top { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
+  .title { font-size: 17px; font-weight: 600; }
+  .tag { font-size: 12px; font-weight: 600; text-align: right; flex-shrink: 0; max-width: 42%; }
+  .lead { font-size: 13px; color: var(--muted); line-height: 1.45; }
+  .meta { font-size: 12px; color: #cbd5e0; }
+  .open { color: var(--link); font-size: 13px; }
+  details[open] .open { display: none; }
+  .body { padding: 0 16px 16px; display: grid; gap: 12px; }
+  .sec { background: #121c2a; border: 1px solid #2d3a4a; border-radius: 10px; padding: 12px 14px; display: grid; gap: 8px; }
+  .sec h3 { margin: 0; font-size: 11px; letter-spacing: .12em; color: #4299e1; }
+  .row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 8px 10px; border-radius: 8px;
+         background: #0f1724; border: 1px solid #1f2b3b; font-size: 14px; line-height: 1.45; }
+  .row small { display: block; color: var(--muted); font-size: 12px; }
+  .row b { font-family: Consolas, monospace; font-size: 12px; font-weight: 400; color: #cbd5e0; }
+  #empty { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; color: var(--muted); line-height: 1.6; }
+  #fresh { position: fixed; left: 50%; transform: translateX(-50%); bottom: 12px; z-index: 5; max-width: calc(100vw - 32px);
+           padding: 10px 14px; border-radius: 8px; background: #302719; border: 1px solid #a4772b; color: var(--warn); font-size: 14px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Known repairs <small id="board-name"></small></h1>
+  <a id="to-board" href="index.html">Open the board</a>
+  <a href="index.html">All boards</a>
+</header>
+<main>
+  <div id="tools">
+    <input id="search" type="search" placeholder="Find by part, symptom or fault code" aria-label="Find a known repair">
+    <span id="count" role="status"></span>
+  </div>
+  <div id="error" role="alert"></div>
+  <div id="groups"></div>
+  <div id="empty" hidden>Nothing is on record for this board yet. A repair closed on a robot cell, each known fault of this board type, and
+    every fix a tech or their Claude saves show here by themselves.</div>
+</main>
+<div id="fresh" role="status" hidden></div>
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script>
+// Known repairs of one board type, for every signed-in tech: the fixes people and their chats wrote (kb_board_fixes),
+// the cell's fault patterns (kb_design_known_faults) and every recorded repair (kb_design_repairs). They live in the
+// shop's Tech KB project; this page reads them with the sign-in of the boards website (the Tech KB accepts it for
+// these three tables only) and listens for changes, so a fix saved a moment ago is here without a reload.
+(async () => {
+  const $ = id => document.getElementById(id), el = (tag, cls, text) => Object.assign(document.createElement(tag), cls ? {className: cls} : {}, text == null ? {} : {textContent: text});
+  const board = new URLSearchParams(location.search).get('board');
+  const sb = supabase.createClient(TM5S_SITE.url, TM5S_SITE.anonKey);
+  const {data: {session}} = await sb.auth.getSession();
+  if (!session) { location.replace('index.html?next=' + encodeURIComponent(location.pathname + location.search)); return; }
+  if (!board) { location.replace('index.html'); return; }
+  $('board-name').textContent = board;
+  $('to-board').href = 'board.html?board=' + encodeURIComponent(board) + '&side=Front';
+  document.title = 'Known repairs · ' + board;
+  const KB = TM5S_SITE.kb;
+  if (!KB || !KB.url) { $('error').textContent = 'This website has not been given the address of the shop’s knowledge base yet.'; return; }
+
+  const token = async () => (await sb.auth.getSession()).data.session?.access_token;
+  async function read(table, order) {
+    const jwt = await token();
+    if (!jwt) { location.replace('index.html?next=' + encodeURIComponent(location.pathname + location.search)); throw new Error('Signed out'); }
+    const response = await fetch(KB.url + '/rest/v1/' + table + '?select=*&board_key=eq.' + encodeURIComponent(board) + '&order=' + order + '&limit=1000',
+      {headers: {apikey: KB.anonKey, Authorization: 'Bearer ' + jwt}});
+    if (!response.ok) throw new Error((await response.text()).slice(0, 200) || String(response.status));
+    return response.json();
+  }
+
+  const day = at => { const d = new Date(at); return !at || isNaN(d) ? String(at || '').slice(0, 10) : d.toLocaleDateString(undefined, {day: 'numeric', month: 'short', year: 'numeric'}); };
+  const short = (text, n) => text.length > n ? text.slice(0, n - 1).trimEnd() + '…' : text;
+  const boards = n => n + (n === 1 ? ' board' : ' boards');
+  const FAULT = {confirmed: ['Confirmed by a repair', '#68d391'], suspected: ['Suspected, not yet proved', '#f6c177'], rule: ['Bench rule', '#90cdf4']};
+  const FIX = {seen: ['Seen once, not yet reviewed', '#f6c177'], reviewed: ['Reviewed', '#68d391']};
+  const SIGN = {fail: 'reads off', open: 'reads open', pass: 'reads good'};
+  const list = value => Array.isArray(value) ? value : [];
+
+  function row(a, b, v) {
+    const line = el('div', 'row'), left = el('div', '', a || '');
+    if (b) left.append(el('small', '', b));
+    line.append(left, el('b', '', v == null ? '' : String(v)));
+    return line;
+  }
+  function section(title, rows) {
+    if (!rows.length) return null;
+    const box = el('div', 'sec');
+    box.append(el('h3', '', title), ...rows);
+    return box;
+  }
+  function card(key, title, tag, lead, meta, sections) {
+    const box = el('details'), head = el('summary'), top = el('div', 'top'), mark = el('span', 'tag', tag[0]);
+    mark.style.color = tag[1];
+    top.append(el('span', 'title', title), mark);
+    head.append(top, el('span', 'lead', lead), el('span', 'meta', meta), el('span', 'open', 'Open'));
+    const body = el('div', 'body');
+    body.append(...sections.filter(Boolean));
+    box.append(head, body);
+    box.dataset.key = key;
+    box.dataset.search = (title + ' ' + tag[0] + ' ' + lead + ' ' + meta + ' ' + body.textContent).toLowerCase();
+    return box;
+  }
+
+  function fixCard(f) {
+    const by = f.written_by ? 'written by ' + f.written_by + (/^chat/.test(f.written_via || '') ? ' with Claude' : '') : (f.written_via || '');
+    return card('fix:' + f.id, f.title || f.symptom || 'Fix', FIX[f.status] || FIX.seen, short(f.fix || f.symptom || '', 190),
+      [f.fault_code ? 'Code ' + f.fault_code : '', list(f.replace_parts).length ? 'Replace ' + f.replace_parts.join(' and ') : '', by, day(f.created_at)].filter(Boolean).join(' · '), [
+        section('WHAT SHOWS', f.symptom ? [row(f.symptom)] : []),
+        section('WHAT FIXED IT', [...(f.fix ? [row(f.fix)] : []), ...list(f.replace_parts).map(p => row(p, 'Replace')), ...list((f.extra || {})['WHAT TO REPLACE']).map(x => row(x.a, x.b, x.v))]),
+        section('WHAT TO CHECK', list(f.check_parts).map(p => row(p))),
+        section('HOW TO CONFIRM IT’S THIS', list(f.confirm).map(x => row(x.a, x.b, x.v))),
+        section('HOW IT’S DONE', list(f.steps).map((x, i) => row((i + 1) + '. ' + (x.a || ''), x.b, x.v))),
+        section('CHECK AFTERWARDS', list((f.extra || {})['CHECK AFTERWARDS']).map(x => row(x.a, x.b, x.v))),
+        section('BOARDS IT WAS SEEN ON', list(f.seen_on).map(u => row(u.unit, u.what, String(u.date || '').slice(0, 10)))),
+        section('NOTES', list((f.extra || {})['TECH NOTES']).map(x => row(x.a, x.b))),
+        section('WHO', [row(by || 'not said', f.status === 'reviewed' ? 'Reviewed' + (f.reviewed_by ? ' on ' + String(f.reviewed_by).replace(/^dashboard · /, '') : '') : 'Not yet reviewed by a senior tech', day(f.created_at))])]);
+  }
+  function faultCard(f) {
+    const units = list(f.units);
+    return card('fault:' + f.fault_id, f.title, FAULT[f.status] || [f.status, '#94a3b8'], short(f.symptom || f.says || '', 190),
+      [list(f.replace_parts).length ? 'Replace ' + f.replace_parts.join(' and ') : '', list(f.check_parts).length ? 'check ' + f.check_parts.join(', ') : '', units.length ? 'seen on ' + boards(units.length) : ''].filter(Boolean).join(' · '), [
+        section('WHAT SHOWS', f.symptom ? [row(f.symptom)] : []),
+        section('WHAT TO REPLACE', list(f.replace_parts).map(p => row(p))),
+        section('WHAT TO CHECK', list(f.check_parts).map(p => row(p))),
+        section('HOW TO CONFIRM IT’S THIS', [...list(f.signs).map(s => row('Pad ' + (s.pad || ''), s.what, SIGN[s.state] || s.state)), ...(f.says ? [row(f.says)] : [])]),
+        section('TRUCK PINS IT TOUCHES', list(f.truck_pins).length ? [row(f.truck_pins.join(', '))] : []),
+        section('BOARDS IT WAS SEEN ON', units.map(u => row(u.unit, u.what, String(u.date || '').slice(0, 10))))]);
+  }
+  function repairCard(r) {
+    const replaced = list(r.replaced), cleared = list(r.cleared).length, still = list(r.still_failing).length;
+    return card('repair:' + r.repair_id, replaced.length ? replaced.join(', ') + ' replaced' : 'Repair', ['Board ' + (r.unit || ''), '#cbd5e0'], short(r.note || '', 190),
+      [String(r.repaired_on || '').slice(0, 10), 'cleared ' + cleared + (cleared === 1 ? ' line' : ' lines') + (still ? ', ' + still + ' still failing' : '')].filter(Boolean).join(' · '), [
+        section('WHAT WAS REPLACED', replaced.map(p => row(p))),
+        section('WHAT WAS FOUND AND DONE', r.note ? [row(r.note)] : []),
+        section('WHAT IT CLEARED', [row('Failing lines this replacement cleared', '', cleared), row('Lines still failing afterwards', '', still)])]);
+  }
+
+  let total = 0;
+  async function draw() {
+    const open = new Set([...document.querySelectorAll('details[open]')].map(box => box.dataset.key));
+    const [fixes, faults, repairs] = await Promise.all([read('kb_board_fixes', 'created_at.desc'), read('kb_design_known_faults', 'title'), read('kb_design_repairs', 'repaired_on.desc')]);
+    const rank = f => f.status === 'confirmed' ? 0 : f.status === 'rule' ? 2 : 1;
+    faults.sort((a, b) => rank(a) - rank(b) || String(a.title).localeCompare(String(b.title)));
+    const groups = [['FIXES AND HOW-TOS FROM THE TEAM', 'written on a dashboard or by a chat · newest first', fixes.map(fixCard)],
+      ['KNOWN FAULTS AND WHAT FIXES THEM', 'from repairs and bench rules on this board type', faults.map(faultCard)],
+      ['REPAIRS DONE ON THIS BOARD TYPE', 'newest first', repairs.map(repairCard)]].filter(group => group[2].length);
+    $('groups').replaceChildren(...groups.map(([title, sub, cards]) => {
+      const part = el('section'), head = el('h2', '', title), grid = el('div', 'grid');
+      head.append(el('span', '', cards.length + ' · ' + sub));
+      for (const box of cards) { if (open.has(box.dataset.key)) box.open = true; grid.append(box); }
+      part.append(head, grid);
+      return part;
+    }));
+    total = fixes.length + faults.length + repairs.length;
+    $('groups').dataset.total = total;
+    $('groups').dataset.drawn = new Date().toISOString();
+    $('empty').hidden = total > 0;
+    $('error').textContent = '';
+    filter();
+  }
+  function filter() {
+    const words = $('search').value.trim().toLowerCase();
+    let shown = 0;
+    for (const box of document.querySelectorAll('#groups details')) { box.hidden = !!words && !box.dataset.search.includes(words); shown += !box.hidden; }
+    $('count').textContent = words ? shown + ' of ' + total : total + ' on record';
+  }
+  $('search').oninput = filter;
+
+  // ---- keeping current: a change is heard at once; a lost line or a sleeping tab catches up when it is back ----
+  let online = true, pending = null;
+  const fresh = () => { $('fresh').hidden = online; $('fresh').textContent = online ? '' : 'Offline · reconnecting. This list may be out of date.'; };
+  const again = () => draw().then(() => { online = true; fresh(); }).catch(error => { if (!navigator.onLine) { online = false; fresh(); } else $('error').textContent = 'Known repairs could not be read: ' + error.message; });
+  const soon = () => { clearTimeout(pending); pending = setTimeout(again, 250); };
+  await again();
+  const kb = supabase.createClient(KB.url, KB.anonKey, {auth: {persistSession: false, autoRefreshToken: false, detectSessionInUrl: false}});
+  kb.realtime.setAuth(await token());
+  sb.auth.onAuthStateChange((event, held) => { if (held?.access_token) kb.realtime.setAuth(held.access_token); });
+  const channel = kb.channel('known-repairs-' + board);
+  for (const table of ['kb_board_fixes', 'kb_design_known_faults', 'kb_design_repairs'])
+    channel.on('postgres_changes', {event: '*', schema: 'public', table, filter: 'board_key=eq.' + board}, soon);
+  channel.subscribe(status => { const was = online; online = status === 'SUBSCRIBED' || (online && status !== 'CHANNEL_ERROR' && status !== 'TIMED_OUT' && status !== 'CLOSED'); if (online && !was) soon(); fresh(); $('groups').dataset.live = status; });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) soon(); });
+  window.addEventListener('offline', () => { online = false; fresh(); });
+  window.addEventListener('online', soon);
+  // The safety pass: a change the live line did not carry is here within this long.
+  setInterval(() => { if (!document.hidden) again(); }, 10000);
+})();
+</script>
+</body>
+</html>

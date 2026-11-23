@@ -26,6 +26,8 @@
   #signin h2 { margin: 0 0 4px; font-size: 22px; }
   #signin label { display: grid; gap: 6px; color: var(--muted); font-size: 14px; }
   #signin p { margin: 0; color: var(--muted); line-height: 1.5; font-size: 14px; }
+  #signin a { color: var(--link); font-size: 14px; }
+  #password-fields { display: grid; gap: 12px; }
   [role=alert]:empty, [hidden] { display: none !important; }
   [role=alert] { color: var(--warn); line-height: 1.5; }
   #tools { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
@@ -42,6 +44,10 @@
   .name { font-size: 18px; font-weight: 600; }
   .part, .meta { color: var(--muted); font-size: 14px; }
   .open { color: var(--link); font-size: 14px; }
+  .entry { display: grid; gap: 6px; align-content: start; }
+  .repairs { color: var(--link); text-decoration: none; font-size: 14px; min-height: 44px; display: flex; align-items: center;
+             padding: 8px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  .repairs:hover, .repairs:focus-visible { border-color: var(--link); outline: none; }
   #cells { margin-top: 24px; color: var(--muted); font-size: 13px; line-height: 1.7; }
   #cells .warn { color: var(--warn); }
 </style>
@@ -55,10 +61,15 @@
 <main>
   <form id="signin" hidden>
     <h2>Sign in</h2>
-    <p>Use the sign-in the robot cell team gave you.</p>
-    <label>Email<input id="email" type="email" autocomplete="username" required></label>
-    <label>Password<input id="password" type="password" autocomplete="current-password" required></label>
-    <button class="primary" id="go">Sign in</button>
+    <button class="primary" type="button" id="zoho" hidden>Sign in with Zoho</button>
+    <p id="zoho-note" hidden>Use the Zoho account you use for mail. There is no separate password.</p>
+    <a href="#" id="use-password" hidden>Sign in with a password instead</a>
+    <div id="password-fields">
+      <p>Use the sign-in the robot cell team gave you.</p>
+      <label>Email<input id="email" type="email" autocomplete="username" required></label>
+      <label>Password<input id="password" type="password" autocomplete="current-password" required></label>
+      <button class="primary" id="go">Sign in</button>
+    </div>
     <div id="signin-error" role="alert"></div>
   </form>
   <section id="list" hidden>
@@ -79,6 +90,27 @@
 const sb = supabase.createClient(TM5S_SITE.url, TM5S_SITE.anonKey);
 const $ = id => document.getElementById(id);
 const next = new URLSearchParams(location.search).get('next');
+// Sign in with Zoho shows only where the shop has set it up: stands sso-add, then TM5S_STANDS_SSO_DOMAIN in config.js.
+const sso = TM5S_SITE.sso && TM5S_SITE.sso.domain ? TM5S_SITE.sso : null;
+// The website's own Zoho sign-in (TM5S tools/stand-site/functions/zoho-sign-in): Zoho, then Zoho Desk says who signed
+// in, then this website's staff list decides, and the person comes back here with a one-time sign-in token.
+const zoho = TM5S_SITE.zoho && TM5S_SITE.zoho.start ? TM5S_SITE.zoho : null;
+const arrived = new URLSearchParams(location.hash.replace(/^#/, ''));
+const oneTime = arrived.get('type') === 'magiclink' ? arrived.get('token_hash') : null;
+if (oneTime) history.replaceState(null, '', location.pathname + location.search);
+let arriveError = '';
+// Zoho or the shared project sends a refused sign-in back here with its reason in the address.
+const refused = new URLSearchParams(location.hash.replace(/^#/, '')).get('error_description')
+  || new URLSearchParams(location.search).get('error_description');
+if (refused) history.replaceState(null, '', location.pathname + (next ? '?next=' + encodeURIComponent(next) : ''));
+
+function signinForm(withPassword) {
+  const withZoho = !!(zoho || sso);
+  $('zoho').hidden = !withZoho; $('zoho-note').hidden = !withZoho || withPassword;
+  $('use-password').hidden = !withZoho || withPassword;
+  $('password-fields').hidden = withZoho && !withPassword;
+  if (refused || arriveError) $('signin-error').textContent = 'Not signed in: ' + (arriveError || refused.replace(/\+/g, ' '));
+}
 
 function ago(at) {
   const seconds = Math.max(0, (Date.now() - Date.parse(at)) / 1000);
@@ -90,9 +122,10 @@ async function show() {
   const {data: {session}} = await sb.auth.getSession();
   $('signin').hidden = !!session; $('list').hidden = !session; $('signout').hidden = !session;
   $('who').textContent = session ? session.user.email : '';
-  if (!session) { $('email').focus(); return; }
+  if (!session) { signinForm(false); ((zoho || sso) ? $('zoho') : $('email')).focus(); return; }
   // Back to the board that asked for a sign-in.
-  if (next && /board\.html\?/.test(next)) { location.replace('board.html' + next.slice(next.indexOf('?'))); return; }
+  const back = next && next.match(/(board|fixes)\.html\?.*$/);
+  if (back) { location.replace(back[0]); return; }
   const {data: stands, error} = await sb.from('stands').select('id,name,part_number,revision,thumbnails,counts,updated_at').order('name');
   if (error) { $('list-error').textContent = 'Boards could not be loaded: ' + error.message; return; }
   const names = [...new Set(stands.flatMap(stand => Object.values(stand.thumbnails || {})))];
@@ -118,7 +151,11 @@ async function show() {
     card.append(photos, line('name', stand.name), line('part', stand.part_number || 'No part number'),
       line('meta', (counts.components ?? 0) + ' components · ' + (counts.test_pads ?? 0) + ' test pads · version ' + stand.revision + ' · ' + ago(stand.updated_at)),
       line('open', 'Open board →'));
-    return card;
+    // Known repairs of the board type: the fixes people and chats wrote, its known faults and every recorded repair.
+    const entry = Object.assign(document.createElement('div'), {className: 'entry'});
+    entry.dataset.search = card.dataset.search;
+    entry.append(card, Object.assign(document.createElement('a'), {className: 'repairs', href: 'fixes.html?board=' + encodeURIComponent(stand.id), textContent: 'Known repairs →'}));
+    return entry;
   }));
   filter();
   const {data: cells} = await sb.from('cells').select('*').order('id');
@@ -148,8 +185,29 @@ $('signin').onsubmit = async event => {
   if (error) { $('signin-error').textContent = 'Not signed in: ' + error.message; return; }
   show();
 };
+$('zoho').onclick = async () => {
+  $('zoho').disabled = true; $('signin-error').textContent = '';
+  if (zoho) { location.href = zoho.start + (next ? '?next=' + encodeURIComponent(next) : ''); return; }
+  // Back to this page, keeping the board that asked for a sign-in.
+  const back = location.origin + location.pathname + (next ? '?next=' + encodeURIComponent(next) : '');
+  const {data, error} = await sb.auth.signInWithSSO({domain: sso.domain, options: {redirectTo: back}});
+  if (error || !data || !data.url) {
+    $('zoho').disabled = false;
+    $('signin-error').textContent = 'Not signed in: ' + (error ? error.message : 'Zoho gave no sign-in address');
+    return;
+  }
+  location.href = data.url;
+};
+$('use-password').onclick = event => { event.preventDefault(); $('signin-error').textContent = ''; signinForm(true); $('email').focus(); };
 $('signout').onclick = async () => { await sb.auth.signOut(); show(); };
-show();
+// Back from Zoho with a one-time token: it becomes the sign-in, once.
+(async () => {
+  if (oneTime) {
+    const {error} = await sb.auth.verifyOtp({token_hash: oneTime, type: 'magiclink'});
+    if (error) arriveError = error.message;
+  }
+  show();
+})();
 </script>
 </body>
 </html>
