@@ -366,6 +366,12 @@
   repairs.style.cssText = 'position:fixed;right:12px;bottom:12px;z-index:190;min-height:44px;display:inline-flex;align-items:center;padding:8px 14px;' +
     'border-radius:8px;background:#1d4ed8;color:#fff;font:600 14px Arial,sans-serif;text-decoration:none;box-shadow:0 8px 30px #0008';
   (function place() { if (document.body) document.body.append(repairs); else setTimeout(place, 200); })();
+  // This page's own "Known repairs" tab lists guides typed into one cell's notebook, which no longer holds any
+  // (they are the shared fixes now): on the website the tab opens the real list.
+  document.addEventListener('click', event => {
+    const tab = event.target.closest?.('button, a');
+    if (tab && tab !== repairs && tab.textContent.trim() === 'Known repairs') { event.preventDefault(); event.stopPropagation(); location.href = repairs.href; }
+  }, true);
 
   window.TM5S_REMOTE = {request, refuse, catchUp, state: () => ({online, newest, revision})};
   listen();
